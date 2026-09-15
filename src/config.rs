@@ -1,19 +1,20 @@
 use crate::args::Args;
 use crate::devel::save_devel_info;
-use crate::exec::{self, Status};
 use crate::fmt::color_repo;
+use crate::help;
 use crate::info::get_terminal_width;
 use crate::pkgbuild::PkgbuildRepos;
-use crate::util::{get_provider, reopen_stdin};
-use crate::{alpm_debug_enabled, help, printtr, repo};
+use crate::util::{executable_name, get_provider, reopen_stdin};
+use crate::{alpm_debug_enabled, printtr, repo};
 
 use std::env::consts::ARCH;
 use std::env::{remove_var, set_var, var};
 use std::fmt;
-use std::fs::{remove_file, OpenOptions};
+use std::fs::{create_dir_all, remove_file, OpenOptions};
 use std::io::{stderr, stdin, stdout, BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::os::unix::fs::PermissionsExt;
 
 use alpm::{
     AnyDownloadEvent, AnyQuestion, Depend, DownloadEvent, DownloadResult, LogLevel, Question,
@@ -25,6 +26,7 @@ use anyhow::{anyhow, bail, ensure, Context, Error, Result};
 use bitflags::bitflags;
 use cini::{Callback, CallbackKind, Ini};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use nix::unistd::{chown, Uid, User};
 use tr::tr;
 use url::Url;
 
@@ -86,7 +88,6 @@ pub struct Colors {
     //pub ss_repo: Style,
     pub ss_name: Style,
     pub ss_ver: Style,
-    pub ss_stats: Style,
     pub ss_orphaned: Style,
     pub ss_installed: Style,
     pub ss_ood: Style,
@@ -99,6 +100,7 @@ pub struct Colors {
     pub group: Style,
     pub stats_line_separator: Style,
     pub stats_value: Style,
+    pub sl_aur: Style,
 }
 
 impl From<&str> for Colors {
@@ -116,7 +118,7 @@ impl Colors {
         Colors {
             enabled: true,
             field: Style::new().bold(),
-            error: Style::new().fg(Red),
+            error: Style::new().fg(Red).bold(),
             warning: Style::new().fg(Yellow),
             bold: Style::new().bold(),
             upgrade: Style::new().fg(Green).bold(),
@@ -129,7 +131,6 @@ impl Colors {
             //ss_repo: Style::new().fg(Blue).bold(),
             ss_name: Style::new().bold(),
             ss_ver: Style::new().fg(Green).bold(),
-            ss_stats: Style::new().bold(),
             ss_orphaned: Style::new().fg(Red).bold(),
             ss_installed: Style::new().fg(Cyan).bold(),
             ss_ood: Style::new().fg(Red).bold(),
@@ -142,6 +143,7 @@ impl Colors {
             group: Style::new().fg(Blue).bold(),
             stats_line_separator: Style::new().fg(Blue).bold(),
             stats_value: Style::new().fg(Cyan),
+            sl_aur: Style::new().fg(Blue).bold(),
         }
     }
 }
@@ -424,7 +426,7 @@ pub struct Config {
     pub redownload: YesNoAll,
     #[default(YesNoAllTree::No)]
     pub rebuild: YesNoAllTree,
-    #[default(YesNoAsk::No)]
+    #[default(YesNoAsk::Yes)]
     pub remove_make: YesNoAsk,
     #[default(SortBy::Votes)]
     pub sort_by: SortBy,
@@ -488,12 +490,10 @@ pub struct Config {
     #[default = "bat"]
     pub bat_bin: String,
     pub fm: Option<String>,
-    pub sudo_loop: Vec<String>,
 
     pub mflags: Vec<String>,
     pub git_flags: Vec<String>,
     pub gpg_flags: Vec<String>,
-    pub sudo_flags: Vec<String>,
     pub bat_flags: Vec<String>,
     pub fm_flags: Vec<String>,
     pub chroot_flags: Vec<String>,
@@ -570,29 +570,62 @@ impl Ini for Config {
             CallbackKind::Directive(_, key, value) => self.parse_directive(key, value),
         };
 
-        let filename = cb.filename.unwrap_or("paru.conf");
+        let filename = cb.filename.unwrap_or("pacmanplus.conf");
         err.map_err(|e| anyhow!("{}:{}: {}", filename, cb.line_number, e))
     }
 }
 
 impl Config {
+    fn add_git_safe_directory(value: &str) {
+        let index = var("GIT_CONFIG_COUNT")
+            .ok()
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+
+        set_var(format!("GIT_CONFIG_KEY_{}", index), "safe.directory");
+        set_var(format!("GIT_CONFIG_VALUE_{}", index), value);
+        set_var("GIT_CONFIG_COUNT", (index + 1).to_string());
+    }
+
+    fn init_cache_dir(cache: &Path) -> Result<()> {
+        if !cache.exists() {
+            create_dir_all(cache).with_context(|| {
+                tr!("failed to create cache directory '{}'", cache.display())
+            })?;
+        }
+
+        if Uid::effective().is_root() {
+            let user = User::from_name("alpm")?
+                .context(tr!("system user 'alpm' does not exist"))?;
+            chown(cache, Some(user.uid), Some(user.gid))?;
+
+            let mut perms = std::fs::metadata(cache)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(cache, perms)?;
+        }
+
+        Ok(())
+    }
+
     pub fn new() -> Result<Self> {
-        let cache =
-            dirs::cache_dir().ok_or_else(|| anyhow!(tr!("failed to find cache directory")))?;
-        let cache = cache.join("paru");
+        let cache = var("PACMANPLUS_CACHE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/var/cache/pacman+"));
+        Self::init_cache_dir(&cache)?;
         let config =
             dirs::config_dir().ok_or_else(|| anyhow!(tr!("failed to find config directory")))?;
-        let config = config.join("paru");
+        let config = config.join("pacman+");
         let state = dirs::state_dir()
             .or_else(dirs::cache_dir)
             .ok_or_else(|| anyhow!(tr!("failed to find state directory")))?;
-        let state = state.join("paru");
+        let state = state.join("pacman+");
 
         let build_dir = cache.join("clone");
+        Self::add_git_safe_directory("*");
         let old_old_devel_path = cache.join("devel.json");
         let old_devel_path = state.join("devel.json");
         let devel_path = state.join("devel.toml");
-        let config_path = config.join("paru.conf");
+        let config_path = config.join("pacmanplus.conf");
 
         let old = if old_devel_path.exists() {
             Some(&old_devel_path)
@@ -628,7 +661,7 @@ impl Config {
             }
         }
 
-        if let Ok(conf) = var("PARU_CONF") {
+        if let Ok(conf) = var("PACMANPLUS_CONF") {
             let path = PathBuf::from(conf);
             ensure!(
                 path.exists(),
@@ -638,7 +671,7 @@ impl Config {
         } else if config_path.exists() {
             config.config_path = Some(config_path);
         } else {
-            let config_path = PathBuf::from("/etc/paru.conf");
+            let config_path = PathBuf::from("/etc/pacmanplus.conf");
 
             if config_path.exists() {
                 config.config_path = Some(config_path);
@@ -699,16 +732,8 @@ impl Config {
         self.globals.bin = self.pacman_bin.clone();
 
         if self.help {
-            match self.op {
-                Op::GetPkgBuild | Op::Show | Op::Default => {
-                    help::help();
-                    std::process::exit(0);
-                }
-                _ => {
-                    let status = exec::pacman(self, &self.args).unwrap_or(Status(1));
-                    std::process::exit(status.code());
-                }
-            }
+            help::help();
+            std::process::exit(0);
         }
 
         if self.version {
@@ -727,10 +752,10 @@ impl Config {
         {
             use std::time::Duration;
 
-            let ver = option_env!("PARU_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+            let ver = option_env!("PACMANPLUS_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
             let client = reqwest::Client::builder()
                 .tcp_keepalive(Duration::new(15, 0))
-                .user_agent(format!("paru/{}", ver))
+                .user_agent(format!("pacmanplus/{}", ver))
                 .build()?;
 
             let rpc_url = match &self.aur_rpc_url {
@@ -811,7 +836,8 @@ impl Config {
     Server = file:///var/lib/repo/aur
 
 then initialise it with:
-    paru -Ly"
+    {} -Ly",
+                    executable_name()
                 );
             }
 
@@ -1013,14 +1039,12 @@ then initialise it with:
             "Git" => self.git_bin = value,
             "Pkgctl" => self.pkgctl_bin = value,
             "Gpg" => self.gpg_bin = value,
-            "Sudo" => self.sudo_bin = value,
             "Pager" => self.pager_cmd = Some(value),
             "Bat" => self.bat_bin = value,
             "FileManager" => self.fm = Some(value),
             "MFlags" => self.mflags.extend(split),
             "GitFlags" => self.git_flags.extend(split),
             "GpgFlags" => self.gpg_flags.extend(split),
-            "SudoFlags" => self.sudo_flags.extend(split),
             "BatFlags" => self.bat_flags.extend(split),
             "FileManagerFlags" => self.fm_flags.extend(split),
             "ChrootFlags" => self.chroot_flags.extend(split),
@@ -1044,13 +1068,6 @@ then initialise it with:
             "AurOnly" => self.mode = Mode::AUR,
             "PkgbuildsOnly" => self.mode = Mode::PKGBUILD,
             "RepoOnly" => self.mode = Mode::REPO,
-            "SudoLoop" => {
-                self.sudo_loop = value
-                    .unwrap_or("-v")
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect()
-            }
             "Devel" => self.devel = true,
             "NoCheck" => self.no_check = true,
             "CleanAfter" => self.clean_after = true,
@@ -1169,8 +1186,8 @@ then initialise it with:
 }
 
 pub fn version() {
-    let ver = option_env!("PARU_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-    print!("paru v{}", ver);
+    let ver = option_env!("PACMANPLUS_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    print!("pacmanplus v{}", ver);
     #[cfg(feature = "git")]
     print!(" +git");
     println!(" - libalpm v{}", alpm::version());

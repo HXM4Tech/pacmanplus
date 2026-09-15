@@ -66,11 +66,11 @@ macro_rules! printtr {
 }
 
 fn debug_enabled() -> bool {
-    env::var("PARU_DEBUG").as_deref().unwrap_or("0") != "0"
+    env::var("PACMANPLUS_DEBUG").as_deref().unwrap_or("0") != "0"
 }
 
 fn alpm_debug_enabled() -> bool {
-    debug_enabled() && env::var("PARU_ALPM_DEBUG").is_ok_and(|v| v != "0")
+    debug_enabled() && env::var("PACMANPLUS_ALPM_DEBUG").is_ok_and(|v| v != "0")
 }
 
 fn print_error(color: Style, err: Error) {
@@ -167,7 +167,11 @@ async fn run2<S: AsRef<str>>(config: &mut Config, args: &[S]) -> Result<i32> {
     };
 
     if args.is_empty() {
-        config.parse_args(["-Syu"])?;
+        print_error(
+            config.color.error,
+            Error::msg(tr!("no operation specified (use -h for help)"))
+        );
+        return Ok(1);
     } else {
         config.parse_args(args)?;
     }
@@ -202,6 +206,13 @@ async fn run2<S: AsRef<str>>(config: &mut Config, args: &[S]) -> Result<i32> {
 }
 
 async fn handle_cmd(config: &mut Config) -> Result<i32> {
+    if config.need_root
+        && matches!(config.op, Op::Sync | Op::Upgrade | Op::Database)
+        && !nix::unistd::Uid::effective().is_root()
+    {
+        bail!(tr!("you cannot perform this operation unless you are root."));
+    }
+
     if (config.op == Op::ChrootCtl || config.chroot) && !has_command("arch-nspawn") {
         bail!(tr!("can not use chroot builds: devtools is not installed"));
     }

@@ -116,7 +116,7 @@ pub async fn list_aur(config: &Config) -> Result<()> {
     let mut stdout = stdout.lock();
 
     for line in data.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
-        print_pkg(config, &mut stdout, line, "aur", "unknown-version");
+        print_pkg(config, &mut stdout, line, "AUR", "unknown-version");
     }
 
     Ok(())

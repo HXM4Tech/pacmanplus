@@ -1,11 +1,10 @@
 use crate::config::{Config, LocalRepos, Sign};
-use crate::exec::{self, command_status};
+use crate::exec::{self};
 use crate::fmt::print_indent;
 use crate::printtr;
 use crate::util::ask;
 
 use std::collections::HashMap;
-use std::env::current_exe;
 use std::ffi::OsStr;
 use std::fs::{read_dir, read_link};
 use std::os::unix::ffi::OsStrExt;
@@ -15,7 +14,7 @@ use std::process::Command;
 use alpm::{AlpmListMut, Db};
 use ansiterm::Style;
 use anyhow::{Context, Error, Result};
-use nix::unistd::{Gid, Uid, User};
+use nix::unistd::{Uid, User};
 use tr::tr;
 use unicode_width::UnicodeWidthStr;
 
@@ -43,17 +42,7 @@ pub fn add<P: AsRef<Path>, S: AsRef<OsStr>>(
     if !db.exists() {
         let mut cmd = Command::new("install");
         cmd.arg("-dm755").arg(path);
-        if exec::command_output(&mut cmd).is_err() {
-            let mut cmd = Command::new(&config.sudo_bin);
-            cmd.arg("install")
-                .arg("-dm755")
-                .arg("-o")
-                .arg(Uid::current().as_raw().to_string())
-                .arg("-g")
-                .arg(Gid::current().as_raw().to_string())
-                .arg(path);
-            exec::command(&mut cmd)?;
-        }
+        exec::command(&mut cmd)?;
     }
 
     let pkgs = pkgs
@@ -84,7 +73,7 @@ pub fn add<P: AsRef<Path>, S: AsRef<OsStr>>(
     if err.is_err() {
         eprintln!(
             "Could not add packages to repo:
-    paru now expects local repos to be writable as your user:
+    pacmanplus now expects local repos to be writable as your user:
     You should chown/chmod your repos to be writable by you:
     chown -R {}: {}",
             user.name,
@@ -250,7 +239,6 @@ pub fn delete(config: &mut Config) -> Result<(), Error> {
 }
 
 pub fn refresh<S: AsRef<OsStr>>(config: &mut Config, repos: &[S]) -> Result<i32> {
-    let exe = current_exe().context(tr!("failed to get current exe"))?;
     let c = config.color;
 
     let mut dbs = config.alpm.syncdbs().to_list_mut();
@@ -266,23 +254,6 @@ pub fn refresh<S: AsRef<OsStr>>(config: &mut Config, repos: &[S]) -> Result<i32>
         if let Some(path) = path {
             init(config, path, db.name())?;
         }
-    }
-
-    if !nix::unistd::getuid().is_root() && !cfg!(feature = "mock") {
-        let mut cmd = Command::new(&config.sudo_bin);
-
-        cmd.arg(exe);
-
-        if let Some(ref conf) = config.pacman_conf {
-            cmd.arg("--config").arg(conf);
-        }
-
-        cmd.arg("--dbpath")
-            .arg(config.alpm.dbpath())
-            .arg("-Ly")
-            .args(repos);
-
-        return Ok(command_status(&mut cmd)?.code());
     }
 
     let mut dbs = config.alpm.syncdbs_mut().to_list_mut();
@@ -372,8 +343,8 @@ pub fn clean(config: &mut Config) -> Result<i32> {
     }
 
     if !rmfiles.is_empty() {
-        let mut cmd = Command::new(&config.sudo_bin);
-        cmd.arg("rm").args(rmfiles);
+        let mut cmd = Command::new("rm");
+        cmd.args(rmfiles);
         exec::command(&mut cmd)?;
     }
 

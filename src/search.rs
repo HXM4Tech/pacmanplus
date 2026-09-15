@@ -9,7 +9,6 @@ use crate::{info, printtr};
 use ansiterm::Style;
 use anyhow::{ensure, Context, Result};
 use flate2::read::GzDecoder;
-use indicatif::HumanBytes;
 use raur::{Raur, SearchBy};
 use regex::RegexSet;
 use reqwest::get;
@@ -38,7 +37,7 @@ pub async fn search(config: &Config) -> Result<i32> {
 
     let pkgs = search_aur(config, &targets)
         .await
-        .context(tr!("aur search failed"))?;
+        .context(tr!("AUR search failed"))?;
 
     let print_custom = || {
         for (repo, srcinfo, pkg) in &custom_pkgs {
@@ -275,7 +274,7 @@ fn print_pkgbuild_pkg(
 
     print!(
         "{}/{} {}",
-        color_repo(c.enabled, repo),
+        c.sl_repo.paint(repo),
         name,
         c.ss_ver.paint(srcinfo.version()),
     );
@@ -307,9 +306,8 @@ fn print_pkg(config: &Config, pkg: &raur::Package, quiet: bool) {
     }
 
     let c = config.color;
-    let stats = format!("+{} ~{:.2}", pkg.num_votes, pkg.popularity);
 
-    let aur = color_repo(c.enabled, "aur");
+    let aur = c.sl_aur.paint("aur").to_string();
     let aur = if let Ok(url) = config.aur_url.join(&format!("packages/{}", pkg.name)) {
         link_str(c.enabled, &aur, url.as_str())
     } else {
@@ -321,11 +319,10 @@ fn print_pkg(config: &Config, pkg: &raur::Package, quiet: bool) {
         c.ss_name.paint(&pkg.name).to_string()
     };
     print!(
-        "{}/{} {} [{}]",
+        "{}/{} {}",
         color_repo(c.enabled, &aur),
         c.ss_name.paint(name),
         c.ss_ver.paint(&pkg.version),
-        c.ss_stats.paint(stats),
     );
 
     if let Some(date) = pkg.out_of_date {
@@ -373,13 +370,8 @@ fn print_alpm_pkg(config: &Config, pkg: &alpm::Package, quiet: bool) {
     }
 
     let c = config.color;
-    let stats = format!(
-        "{} {}",
-        HumanBytes(pkg.download_size() as u64),
-        HumanBytes(pkg.isize() as u64)
-    );
     let ver: &str = pkg.version().as_ref();
-    let mut repo = color_repo(c.enabled, pkg.db().unwrap().name());
+    let mut repo = c.sl_repo.paint(pkg.db().unwrap().name()).to_string();
     if is_arch_repo(pkg.db().unwrap().name()) {
         if let Ok(url) = config.arch_url.join(&format!(
             "packages/{}/{}/{}/",
@@ -398,11 +390,10 @@ fn print_alpm_pkg(config: &Config, pkg: &alpm::Package, quiet: bool) {
     };
 
     print!(
-        "{}/{} {} [{}]",
-        color_repo(c.enabled, &repo),
+        "{}/{} {}",
+        c.sl_repo.paint(&repo),
         c.ss_name.paint(name),
         c.ss_ver.paint(ver),
-        c.ss_stats.paint(stats),
     );
 
     if let Ok(repo_pkg) = config.alpm.localdb().pkg(pkg.name()) {

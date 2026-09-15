@@ -3,6 +3,7 @@ use crate::repo;
 
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::env::current_exe;
 use std::fs::File;
 use std::io::{stderr, stdin, stdout, BufRead, Write};
 use std::mem::take;
@@ -22,6 +23,14 @@ pub struct NumberMenu<'a> {
     pub ex_range: Vec<Range<usize>>,
     pub in_word: Vec<&'a str>,
     pub ex_word: Vec<&'a str>,
+}
+
+pub fn executable_name() -> String {
+    current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|f| f.to_string_lossy().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "pacman+".to_string())
 }
 
 pub fn pkg_base_or_name(pkg: &Package) -> &str {

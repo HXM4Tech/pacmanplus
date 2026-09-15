@@ -1,8 +1,9 @@
 # vim:fdm=marker foldlevel=0 tabstop=2 shiftwidth=2 filetype=fish
 # Original Author for pacman: Giorgio Lando <patroclo7@gmail.com>
 # Updated for paru by jguer
+# Updated for pacman+ by Krzysztof Stefańczyk
 
-set -l progname paru
+set -l progname pacmanplus
 
 function __fish_print_paru_repos --description "Print the repositories configured for paru"
     string match -er "\[.*\]" </etc/pacman.conf | string match -r -v "^#|options" | string replace -ra "\[|\]" ""
@@ -157,39 +158,6 @@ complete -c $progname -n "$sync" -xa "$listall $listgroups"
 complete -c $progname -n "$upgrade" -xa '(__fish_complete_suffix pkg.tar.zst; __fish_complete_suffix pkg.tar.xz; __fish_complete_suffix pkg.tar.gz)' -d 'Package file'
 
 complete -c $progname -n "$upgrade" -s i -l install -d 'Install package as well as building' -f
-
-# paru operations
-complete -c $progname -s P -f -l show -n "$noopt" -d 'Print information'
-complete -c $progname -s G -f -l getpkgbuild -n "$noopt" -d 'Get PKGBUILD from ABS or AUR'
-complete -c $progname -s L -f -l repoctl -n "$noopt" -d 'List local repos'
-complete -c $progname -s C -f -l chrootctl -n "$noopt" -d 'Interactive shell to the chroot'
-
-
-# paru options
-complete -c $progname -s c -l clean -n "$noopt" -d 'Remove unneeded dependencies' -f
-complete -c $progname -l gendb -n "$noopt" -d 'Generate development package DB' -f
-
-# Show options
-complete -c $progname -n "$show" -s w -l news -d 'Print arch news' -f
-complete -c $progname -n "$show" -s s -l stats -d 'Display system package statistics' -f
-
-# Getpkgbuild options
-complete -c $progname -n "$getpkgbuild" -s p -l print -d 'Print PKGBUILD instead of downloading' -f
-complete -c $progname -n "$getpkgbuild" -s c -l comments -d "Print the AUR comments from the PKGBUILD's AUR page" -f
-
-complete -c $progname -n "$getpkgbuild" -xa "$listall"
-
-# Repoctl options
-complete -c $progname -n "$repoctl" -s l -l list -d 'List packages in local repos' -f
-complete -c $progname -n "$repoctl" -s d -l delete -d 'Remove a package from the local repo' -f
-complete -c $progname -n "$repoctl; and __fish_contains_opt -s d delete" -d 'Package in local repo' -xa '(paru --repoctl --list --quiet)'
-complete -c $progname -n "$repoctl" -s q -l quiet -d 'Show less information' -f
-complete -c $progname -n "$repoctl" -s y -l refresh -d 'Refresh local repos' -f
-complete -c $progname -n "$repoctl" -s c -l clean -d 'Remove uninstalled packages from repos' -f
-
-# Chrootctl options
-complete -c $progname -n "$chrootctl" -s i -l install -d 'Install a package into the chroot' -xa "$listpacman"
-complete -c $progname -n "$chrootctl" -s u -l sysupgrade -d 'Upgrade the chroot' -f
 
 # New options
 complete -c $progname -n "not $noopt" -l repo -d 'Assume targets are from the repositories' -f

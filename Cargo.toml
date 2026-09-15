@@ -1,18 +1,14 @@
 [package]
-name = "paru"
-version = "2.1.0"
-authors = ["morganamilo <morganamilo@archlinux.org>"]
+name = "pacmanplus"
+version = "1.0.0"
+authors = ["Krzysztof Stefańczyk <krzys.stefanczyk@gmail.com>", "morganamilo <morganamilo@archlinux.org>"]
 edition = "2021"
 
-description = "Feature packed AUR helper"
-homepage = "https://github.com/Morganamilo/paru"
-repository = "https://github.com/Morganamilo/paru"
-documentation = "https://docs.rs/paru"
+description = "Pacman package manager extended with AUR building support, based on paru AUR helper"
+homepage = "https://github.com/HXM4Tech/pacmanplus"
+repository = "https://github.com/HXM4Tech/pacmanplus"
 license = "GPL-3.0"
 keywords = ["archlinux", "arch", "alpm", "pacman", "aur"]
-include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md", "help"]
-rust-version = "1.87"
-
 
 [dependencies]
 alpm = "5.0.2"
@@ -71,10 +67,3 @@ static = ["alpm/static"]
 mock = ["async-trait"]
 mock_chroot = ["mock"]
 #default = ["git", "generate"]
-
-[patch.crates-io]
-#alpm = { path = "../alpm.rs/alpm" }
-#alpm-utils = { path = "../alpm.rs/alpm-utils" }
-#aur-depends = { path = "../aur-depends" }
-#srcinfo = { path = "../srcinfo.rs" }
-#aur-fetch = { path = "../aur-fetch" }

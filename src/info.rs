@@ -221,7 +221,7 @@ pub fn print_aur_info(
     let no = tr!("No");
 
     for pkg in pkgs {
-        print(&tr!("Repository"), "aur");
+        print(&tr!("Repository"), "AUR");
         print(&tr!("Name"), &pkg.name);
         print(&tr!("Version"), &pkg.version);
         print(&tr!("Description"), &opt(&pkg.description));

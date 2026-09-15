@@ -1,9 +1,8 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::env::var;
-use std::ffi::OsStr;
 use std::fmt::Write as _;
-use std::fs::{read_dir, read_link, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -11,8 +10,6 @@ use std::sync::atomic::Ordering;
 
 use crate::args::{Arg, Args};
 use crate::chroot::Chroot;
-use crate::clean::clean_untracked;
-use crate::completion::update_aur_cache;
 use crate::config::{Config, LocalRepos, Mode, Op, Sign, YesNoAllTree, YesNoAsk};
 use crate::devel::{fetch_devel_info, load_devel_info, save_devel_info, DevelInfo};
 use crate::download::{self, Bases};
@@ -24,6 +21,7 @@ use crate::resolver::{flags, resolver};
 use crate::upgrade::{get_upgrades, Upgrades};
 use crate::util::{ask, repo_aur_pkgs, split_repo_aur_targets};
 use crate::{args, exec, news, print_error, printtr, repo};
+use crate::completion::update_aur_cache;
 
 use alpm::{Alpm, Depend, Version};
 use alpm_utils::depends::{satisfies, satisfies_nover, satisfies_provide, satisfies_provide_nover};
@@ -124,13 +122,26 @@ impl Installer {
         }
     }
 
-    fn early_refresh(&self, config: &mut Config) -> Result<()> {
+    async fn early_refresh(&self, config: &mut Config) -> Result<()> {
         let mut args = config.pacman_globals();
         for _ in 0..config.args.count("y", "refresh") {
             args.arg("y");
         }
         args.targets.clear();
+        let aur_refresh = {
+            let c = config.color;
+            println!(
+                "{} {}",
+                c.action.paint("::"),
+                c.bold.paint(tr!("Downloading AUR package list..."))
+            );
+
+            let aur_url = config.aur_url.clone();
+            let cache_dir = config.cache_dir.clone();
+            tokio::spawn(async move { update_aur_cache(&aur_url, &cache_dir, Some(0)).await })
+        };
         exec::pacman(config, &args)?.success()?;
+        aur_refresh.await.context(tr!("failed to update AUR package list"))??;
         config.args.remove("y").remove("refresh");
         Ok(())
     }
@@ -142,15 +153,6 @@ impl Installer {
         exec::pacman(config, &args)?.success()?;
         config.args.remove("y").remove("refresh");
         config.args.remove("u").remove("sysupgrade");
-        Ok(())
-    }
-
-    fn sudo_loop(&self, config: &Config) -> Result<()> {
-        if !config.sudo_loop.is_empty() {
-            let mut flags = config.sudo_flags.clone();
-            flags.extend(config.sudo_loop.clone());
-            exec::spawn_sudo(config.sudo_bin.clone(), flags)?;
-        }
         Ok(())
     }
 
@@ -407,7 +409,7 @@ impl Installer {
         Ok(())
     }
 
-    fn build_cleanup(&self, config: &Config, build: &[Base]) -> Result<()> {
+    fn build_cleanup(&self, config: &Config, _build: &[Base]) -> Result<()> {
         let mut ret = 0;
 
         if !self.remove_make.is_empty() {
@@ -418,27 +420,6 @@ impl Installer {
             if let Err(err) = exec::pacman(config, &args) {
                 print_error(config.color.error, err);
                 ret = 1;
-            }
-        }
-
-        if config.clean_after {
-            for base in build {
-                let path = match base {
-                    Base::Aur(base) => config.build_dir.join(base.package_base()),
-                    Base::Pkgbuild(base) => config
-                        .pkgbuild_repos
-                        .repo(&base.repo)
-                        .unwrap()
-                        .base(config, base.package_base())
-                        .unwrap()
-                        .path
-                        .clone(),
-                };
-
-                if let Err(err) = clean_untracked(config, &path) {
-                    print_error(config.color.error, err);
-                    ret = 1;
-                }
             }
         }
 
@@ -897,7 +878,6 @@ impl Installer {
     }
 
     pub async fn install(&mut self, config: &mut Config, targets_str: &[String]) -> Result<()> {
-        self.sudo_loop(config)?;
         self.news(config).await?;
 
         config.set_op_args_globals(Op::Sync);
@@ -914,7 +894,7 @@ impl Installer {
         if config.mode.repo() {
             if config.combined_upgrade {
                 if config.args.has_arg("y", "refresh") {
-                    self.early_refresh(config)?;
+                    self.early_refresh(config).await?;
                 }
             } else if !config.chroot
                 && (config.args.has_arg("y", "refresh")
@@ -991,14 +971,6 @@ impl Installer {
             let targets = targets.iter().map(|t| t.to_string()).collect::<Vec<_>>();
             args.targets = targets.iter().map(|s| s.as_str()).collect();
 
-            if !args.targets.is_empty()
-                || args.has_arg("u", "sysupgrade")
-                || args.has_arg("y", "refresh")
-            {
-                let code = exec::pacman(config, &args)?.code();
-                return Status::err(code);
-            }
-
             return Ok(());
         }
 
@@ -1073,9 +1045,6 @@ impl Installer {
         cache: &Cache,
         actions: &mut Actions<'_>,
     ) -> Result<()> {
-        if !actions.build.is_empty() && nix::unistd::getuid().is_root() {
-            bail!(tr!("can't install AUR package as root"));
-        }
         if !actions.build.is_empty() && config.args.has_arg("w", "downloadonly") {
             bail!(tr!("--downloadonly can't be used for AUR packages"));
         }
@@ -1120,11 +1089,12 @@ impl Installer {
             false
         };
 
+        let mut do_review = false;
         if !config.skip_review && actions.iter_aur_pkgs().next().is_some() {
-            if !ask(config, &tr!("Proceed to review?"), true) {
-                return Status::err(1);
-            }
-        } else if !ask(config, &tr!("Proceed with installation?"), true) {
+            do_review = ask(config, &tr!("Review?"), false);
+        }
+
+        if !do_review && !ask(config, &tr!("Proceed with installation?"), true) {
             return Status::err(1);
         }
 
@@ -1157,7 +1127,7 @@ impl Installer {
             }
         }
 
-        if !config.skip_review {
+        if do_review {
             let pkgs = actions
                 .build
                 .iter()
@@ -1218,8 +1188,6 @@ impl Installer {
         } else {
             return Ok(());
         }
-
-        update_aur_list(config);
 
         if has_make {
             self.remove_make.extend(
@@ -1586,7 +1554,7 @@ fn file_manager(
 ) -> Result<tempfile::TempDir> {
     let has_diff = fetch.has_diff(pkgs)?;
     fetch.save_diffs(&has_diff)?;
-    let view = tempfile::Builder::new().prefix("aur").tempdir()?;
+    let view = tempfile::Builder::new().prefix("pacmanplus-AUR").tempdir()?;
     fetch.make_view(view.path(), pkgs, &has_diff)?;
     run_file_manager(config, fm, view.path())?;
     Ok(view)
@@ -1604,105 +1572,48 @@ fn run_file_manager(config: &Config, fm: &str, dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn print_dir(
+fn print_pkgbuild(
     config: &Config,
     pkgdir: &Path,
-    path: &Path,
     stdin: &mut impl Write,
     buf: &mut Vec<u8>,
     bat: bool,
-    recurse: u32,
 ) -> Result<()> {
-    {
-        let c = config.color;
-        let has_pkgbuild = path.join("PKGBUILD").exists();
+    let c = config.color;
+    let path = pkgdir.join("PKGBUILD");
 
-        for file in read_dir(path).with_context(|| tr!("failed to read dir: {}", path.display()))? {
-            let file = file?;
+    let _ = writeln!(stdin, "  {}:", c.bold.paint("PKGBUILD"));
 
-            if file.file_type()?.is_dir() && file.path().file_name() == Some(OsStr::new(".git")) {
-                continue;
-            }
-            if file.file_type()?.is_file()
-                && file.path().file_name() == Some(OsStr::new(".SRCINFO"))
-            {
-                continue;
-            }
-            if file.file_type()?.is_dir() {
-                if recurse == 0 {
-                    continue;
-                }
-                print_dir(config, pkgdir, &file.path(), stdin, buf, bat, recurse - 1)?;
-            }
-            if !has_pkgbuild {
-                continue;
-            }
-            if file.file_type()?.is_symlink() {
-                let s = format!(
-                    "  {} -> {}\n\n",
-                    file.path().strip_prefix(pkgdir)?.display(),
-                    read_link(file.path())?.display()
-                );
-                let _ = write!(stdin, "  {}", c.bold.paint(s));
-                continue;
-            }
-            if file.file_type()?.is_dir() {
-                continue;
-            }
+    if bat {
+        let mut cmd = Command::new(&config.bat_bin);
+        cmd.arg("-pp")
+            .arg("--color=always")
+            .arg(&path)
+            .args(&config.bat_flags);
+        let output = exec::command_output(&mut cmd)?;
 
-            let _ = writeln!(
-                stdin,
-                "  {}:",
-                c.bold
-                    .paint(file.path().strip_prefix(pkgdir)?.display().to_string())
-            );
-            if bat {
-                let mut cmd = Command::new(&config.bat_bin);
-                cmd.arg("-pp")
-                    .arg("--color=always")
-                    .arg(file.path())
-                    .args(&config.bat_flags);
-                let output = exec::command_output(&mut cmd)?;
+        for line in output.stdout.lines() {
+            let _ = stdin.write_all(b"    ");
+            let _ = stdin.write_all(line?.as_bytes());
+            let _ = stdin.write_all(b"\n");
+        }
+    } else {
+        let mut pkgfile = OpenOptions::new().read(true).open(&path).with_context(|| {
+            tr!("failed to open: {}", path.display().to_string())
+        })?;
+        buf.clear();
+        pkgfile.read_to_end(buf)?;
 
-                for line in output.stdout.lines() {
-                    let _ = stdin.write_all(b"    ");
-                    let _ = stdin.write_all(line?.as_bytes());
-                    let _ = stdin.write_all(b"\n");
-                }
-            } else {
-                let mut pkgfile = OpenOptions::new()
-                    .read(true)
-                    .open(file.path())
-                    .with_context(|| {
-                        tr!("failed to open: {}", file.path().display().to_string())
-                    })?;
-                buf.clear();
-                pkgfile.read_to_end(buf)?;
-
-                match std::str::from_utf8(buf) {
-                    Ok(_) => {
-                        for line in buf.lines() {
-                            let _ = stdin.write_all(b"    ");
-                            let _ = stdin.write_all(line?.as_bytes());
-                            let _ = stdin.write_all(b"\n");
-                        }
-                    }
-                    Err(_) => {
-                        let file = file.path();
-                        let file = file.strip_prefix(pkgdir)?;
-                        let _ = write!(
-                            stdin,
-                            "  {}",
-                            c.bold
-                                .paint(tr!("binary file: {}", file.display().to_string()))
-                        );
-                    }
-                };
-            }
+        let content = std::str::from_utf8(buf)
+            .with_context(|| tr!("PKGBUILD is not valid UTF-8: {}", path.display()))?;
+        for line in content.lines() {
+            let _ = stdin.write_all(b"    ");
+            let _ = stdin.write_all(line.as_bytes());
             let _ = stdin.write_all(b"\n");
         }
     }
 
+    let _ = stdin.write_all(b"\n");
     Ok(())
 }
 
@@ -1716,98 +1627,66 @@ pub fn review(config: &Config, fetch: &aur_fetch::Fetch, pkgs: &[&str]) -> Resul
         if let Some(ref fm) = config.fm {
             let _view = file_manager(config, fetch, fm, pkgs)?;
 
-            if !ask(config, &tr!("Accept changes?"), true) {
+            if !ask(config, &tr!("Accept?"), true) {
                 return Status::err(1);
             }
 
             if config.save_changes {
-                fetch.commit(pkgs, "paru save changes")?;
+                fetch.commit(pkgs, "pacmanplus save changes")?;
             }
         } else {
-            let unseen = fetch.unseen(pkgs)?;
-            let has_diff = fetch.has_diff(&unseen)?;
-            let printed = !has_diff.is_empty() || unseen.iter().any(|p| !has_diff.contains(p));
-            let diffs = fetch.diff(&has_diff, config.color.enabled)?;
+            let pager_unconfigured =
+                var("PACMANPLUS_PAGER").is_err() && var("PAGER").is_err();
+            let pager = if has_command("less") { "less" } else { "cat" };
 
-            if printed {
-                let pager_unconfigured = var("PARU_PAGER").is_err() && var("PAGER").is_err();
-                let pager = if has_command("less") { "less" } else { "cat" };
+            let pager = config
+                .pager_cmd
+                .clone()
+                .or_else(|| var("PACMANPLUS_PAGER").ok())
+                .or_else(|| var("PAGER").ok())
+                .unwrap_or_else(|| pager.to_string());
 
-                let pager = config
-                    .pager_cmd
-                    .clone()
-                    .or_else(|| var("PARU_PAGER").ok())
-                    .or_else(|| var("PAGER").ok())
-                    .unwrap_or_else(|| pager.to_string());
+            exec::RAISE_SIGPIPE.store(false, Ordering::Relaxed);
+            let mut command = Command::new("sh");
 
-                exec::RAISE_SIGPIPE.store(false, Ordering::Relaxed);
-                let mut command = Command::new("sh");
+            if std::env::var("LESS").is_err() {
+                command.env("LESS", "SRXF");
+            }
+            command.arg("-c").arg(&pager).stdin(Stdio::piped());
+            let mut child = exec::spawn(&mut command)?;
 
-                if std::env::var("LESS").is_err() {
-                    command.env("LESS", "SRXF");
-                }
-                command.arg("-c").arg(&pager).stdin(Stdio::piped());
-                let mut child = exec::spawn(&mut command)?;
+            let mut stdin = child.stdin.take().unwrap();
 
-                let mut stdin = child.stdin.take().unwrap();
+            if pager_unconfigured && pager == "less" {
+                let _ = write!(
+                    stdin,
+                    "{}",
+                    c.bold
+                        .paint(tr!("Paging with less. Press 'q' to quit or 'h' for help."))
+                );
+                let _ = stdin.write_all(b"\n\n");
+            }
 
-                if pager_unconfigured && pager == "less" {
-                    let _ = write!(
-                        stdin,
-                        "{}",
-                        c.bold
-                            .paint(tr!("Paging with less. Press 'q' to quit or 'h' for help."))
-                    );
-                    let _ = stdin.write_all(b"\n\n");
-                }
+            let bat = config.color.enabled && has_command(&config.bat_bin);
+            let mut buf = Vec::new();
+            for &pkg in pkgs {
+                let dir = fetch.clone_dir.join(pkg);
+                let _ = writeln!(stdin, "{} {}:", c.action.paint("::"), c.bold.paint(pkg));
+                print_pkgbuild(config, &dir, &mut stdin, &mut buf, bat)?;
+            }
 
-                for (&pkg, diff) in has_diff.iter().zip(diffs) {
-                    let _ = write!(
-                        stdin,
-                        "{} {}:\n    ",
-                        c.action.paint("::"),
-                        c.bold.paint(pkg)
-                    );
-                    let _ = stdin.write_all(diff.replace('\n', "\n    ").trim_end().as_bytes());
-                    let _ = stdin.write_all(b"\n\n");
-                }
+            drop(stdin);
+            exec::wait(&command, &mut child)?;
+            exec::RAISE_SIGPIPE.store(true, Ordering::Relaxed);
 
-                let bat = config.color.enabled && has_command(&config.bat_bin);
-
-                let mut buf = Vec::new();
-                for &pkg in &unseen {
-                    if !has_diff.contains(&pkg) {
-                        let dir = fetch.clone_dir.join(pkg);
-                        let _ = writeln!(stdin, "{} {}:", c.action.paint("::"), c.bold.paint(pkg));
-                        print_dir(config, &dir, &dir, &mut stdin, &mut buf, bat, 1)?;
-                    }
-                }
-
-                drop(stdin);
-                exec::wait(&command, &mut child)?;
-                exec::RAISE_SIGPIPE.store(true, Ordering::Relaxed);
-
-                if !ask(config, &tr!("Accept changes?"), true) {
-                    return Status::err(1);
-                }
-            } else {
-                printtr!(" nothing new to review");
+            if !ask(config, &tr!("Accept?"), true) {
+                return Status::err(1);
             }
         }
     }
 
     fetch.mark_seen(pkgs)?;
     Ok(())
-}
-
-fn update_aur_list(config: &Config) {
-    let url = config.aur_url.clone();
-    let dir = config.cache_dir.clone();
-    let interval = config.completion_interval;
-
-    tokio::spawn(async move {
-        let _ = update_aur_cache(&url, &dir, Some(interval)).await;
-    });
 }
 
 fn chroot(config: &Config) -> Chroot {

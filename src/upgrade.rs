@@ -118,22 +118,13 @@ async fn get_resolver_upgrades<'a, 'b>(
     print: bool,
 ) -> Result<Updates<'a>> {
     if print {
-        if config.mode.pkgbuild() {
+        if config.mode.aur() {
             let c = config.color;
             println!(
                 "{} {}",
                 c.action.paint("::"),
-                c.bold.paint(tr!("Looking for PKGBUILD upgrades..."))
+                c.bold.paint(tr!("Looking for AUR upgrades..."))
             );
-
-            if config.mode.aur() {
-                let c = config.color;
-                println!(
-                    "{} {}",
-                    c.action.paint("::"),
-                    c.bold.paint(tr!("Looking for AUR upgrades..."))
-                );
-            }
         }
 
         let dbs = match config.repos {
@@ -291,7 +282,7 @@ pub async fn get_upgrades<'a, 'b>(
         .chain(
             aur_upgrades
                 .iter()
-                .map(|u| db_len(u.local.name(), "aur", aurdbs.list())),
+                .map(|u| db_len(u.local.name(), "AUR", aurdbs.list())),
         )
         .chain(
             devel_upgrades
@@ -339,8 +330,8 @@ pub async fn get_upgrades<'a, 'b>(
     for pkg in aur_upgrades.iter().rev().rev() {
         let remote = aurdbs
             .pkg(pkg.local.name())
-            .map(|p| format!("{}-aur", p.db().unwrap().name()));
-        let remote = remote.as_deref().unwrap_or("aur");
+            .map(|p| format!("{}-AUR", p.db().unwrap().name()));
+        let remote = remote.as_deref().unwrap_or("AUR");
         print_upgrade(
             config,
             index,
@@ -382,7 +373,7 @@ pub async fn get_upgrades<'a, 'b>(
         let remote = aurdbs
             .pkg(pkg.local.name())
             .map(|p| format!("{}-{}", p.db().unwrap().name(), pkg.repo));
-        let remote = remote.as_deref().unwrap_or("aur");
+        let remote = remote.as_deref().unwrap_or("AUR");
         print_upgrade(
             config,
             index,
@@ -418,7 +409,7 @@ pub async fn get_upgrades<'a, 'b>(
         let remote = aurdbs
             .pkg(pkg.local.name())
             .map(|p| p.db().unwrap().name())
-            .unwrap_or("aur");
+            .unwrap_or("AUR");
         if !number_menu.contains(index, remote) || input.is_empty() {
             aur_keep.push(pkg.local.name().to_string());
         }

@@ -178,7 +178,6 @@ impl Config {
             Arg::Long("pacman-conf") => self.pacman_conf_bin = Some(value?.to_string()),
             Arg::Long("git") => self.git_bin = value?.to_string(),
             Arg::Long("gpg") => self.gpg_bin = value?.to_string(),
-            Arg::Long("sudo") => self.sudo_bin = value?.to_string(),
             Arg::Long("pkgctl") => self.pkgctl_bin = value?.to_string(),
             Arg::Long("bat") => self.bat_bin = value?.to_string(),
             Arg::Long("fm") => self.fm = Some(value?.to_string()),
@@ -191,7 +190,6 @@ impl Config {
             Arg::Long("mflags") => self.mflags.extend(split_whitespace(value?)),
             Arg::Long("gitflags") => self.git_flags.extend(split_whitespace(value?)),
             Arg::Long("gpgflags") => self.gpg_flags.extend(split_whitespace(value?)),
-            Arg::Long("sudoflags") => self.sudo_flags.extend(split_whitespace(value?)),
             Arg::Long("batflags") => self.bat_flags.extend(split_whitespace(value?)),
             Arg::Long("fmflags") => self.fm_flags.extend(split_whitespace(value?)),
             Arg::Long("chrootflags") => self.chroot_flags.extend(split_whitespace(value?)),
@@ -275,14 +273,6 @@ impl Config {
             Arg::Long("nocombinedupgrade") => self.combined_upgrade = false,
             Arg::Long("batchinstall") => self.batch_install = true,
             Arg::Long("nobatchinstall") => self.batch_install = false,
-            Arg::Long("sudoloop") => {
-                self.sudo_loop = value
-                    .unwrap_or("-v")
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect()
-            }
-            Arg::Long("nosudoloop") => self.sudo_loop.clear(),
             Arg::Long("clean") => self.clean += 1,
             Arg::Long("optional") => self.optional = true,
             Arg::Long("complete") => self.complete = true,
@@ -401,7 +391,6 @@ fn takes_value(arg: Arg) -> TakesValue {
         Arg::Long("pacman-conf") => TakesValue::Required,
         Arg::Long("git") => TakesValue::Required,
         Arg::Long("gpg") => TakesValue::Required,
-        Arg::Long("sudo") => TakesValue::Required,
         Arg::Long("pkgctl") => TakesValue::Required,
         Arg::Long("fm") => TakesValue::Required,
         Arg::Long("bat") => TakesValue::Required,
@@ -410,7 +399,6 @@ fn takes_value(arg: Arg) -> TakesValue {
         Arg::Long("mflags") => TakesValue::Required,
         Arg::Long("gitflags") => TakesValue::Required,
         Arg::Long("gpgflags") => TakesValue::Required,
-        Arg::Long("sudoflags") => TakesValue::Required,
         Arg::Long("batflags") => TakesValue::Required,
         Arg::Long("fmflags") => TakesValue::Required,
         Arg::Long("chrootflags") => TakesValue::Required,
@@ -423,7 +411,6 @@ fn takes_value(arg: Arg) -> TakesValue {
         Arg::Long("removemake") => TakesValue::Optional,
         Arg::Long("redownload") => TakesValue::Optional,
         Arg::Long("rebuild") => TakesValue::Optional,
-        Arg::Long("sudoloop") => TakesValue::Optional,
         Arg::Long("develsuffixes") => TakesValue::Required,
         Arg::Long("localrepo") => TakesValue::Optional,
         Arg::Long("chroot") => TakesValue::Optional,

@@ -91,7 +91,7 @@ pub async fn stats(config: &Config) -> Result<i32> {
         c.stats_value.paint(info.total_packages.to_string())
     );
     printtr!(
-        "Aur packages: {}",
+        "AUR packages: {}",
         c.stats_value.paint(warnings.pkgs.len().to_string())
     );
     printtr!(

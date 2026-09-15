@@ -166,33 +166,6 @@ _pacman_opts_query_modifiers=(
 	{-u,--upgrades}'[List packages that can be upgraded]'
 )
 
-# -G
-_pacman_opts_getpkgbuild_modifiers=(
-	{-p,--print}'[Print PKGBUILD instead of downloading]'
-	{-c,--comments}"[Print the AUR comments from the PKGBUILD's AUR page]"
-	{-s,--ssh}"[Clone the AUR package using SSH]"
-)
-
-# -L
-_pacman_opts_repoctl_modifiers=(
-	{-l,--list}'[List packages in local repos]'
-	{-d,--delete}"[Remove a package from the local repo]"
-	{-q,--quiet}'[Show less information]'
-	{-y,--refresh}'[Refresh local repos]'
-	{-c,--clean}'[Remove uninstalled packages from repos]'
-)
-
-# -L
-_pacman_opts_chrootctl_modifiers=(
-	{-i,--install}'[Install a package into the chroot]'
-	{-u,--sysupgrade}'[Upgrade the chroot]'
-)
-
-# -P
-_pacman_opts_print_modifiers=(
-		{-w,--news}'[Print arch news]'
-		{-s,--stats}'[Display system package statistics]'
-)
 # options for passing to _arguments: options for --remove command
 _pacman_opts_remove=(
 	{-c,--cascade}'[Remove all dependent packages]'
@@ -392,27 +365,6 @@ _pacman_action_version() {
 	return 0
 }
 
-# handles --getpkgbuild subcommand
-_pacman_action_getpkgbuild() {
-  local aur_only
-  typeset -A opt_args
-  if (( $+words[(r)-c] )) || (( $+words[(r)--comments] )); then
-    aur_only=1
-  elif (( $+words[(r)-s] )) || (( $+words[(r)--ssh] )); then
-    aur_only=1
-  fi
-
-  if [[ $aur_only == 1 ]]; then
-    _arguments -s : \
-        "$_pacman_opts_getpkgbuild_modifiers[@]" \
-        '*:package:_pacman_completions_aur_packages'
-  else
-    _arguments -s : \
-        "$_pacman_opts_getpkgbuild_modifiers[@]" \
-        '*:package:_pacman_completions_all_packages'
-  fi
-}
-
 # provides completions for package groups
 _pacman_completions_all_groups() {
 	local -a cmd groups
@@ -608,17 +560,6 @@ _pacman_zsh_comp() {
 			;;
 		V*)
 			_pacman_action_version
-			;;
-		Y*)
-			_arguments -s : \
-				"$_pacman_opts_paru_modifiers[@]"
-			;;
-		G*)
-			_pacman_action_getpkgbuild
-			;;
-		L*)
-			_arguments -s : \
-				"$_pacman_opts_repoctl_modifiers[@]"
 			;;
 		C*)
 			_arguments -s : \

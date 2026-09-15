@@ -249,7 +249,11 @@ pub fn print_install(config: &Config, actions: &Actions, devel: &HashSet<String>
     }
 
     if !to.make_install.is_empty() {
-        let fmt = format!("{} ({}) ", tr!("Repo Make"), to.make_install.len());
+        let fmt = format!(
+            "{} ({}) ",
+            tr!("Repo (build requirements)"),
+            to.make_install.len()
+        );
         let start = 22 + to.make_install.len().to_string().len();
         print!("{}", c.bold.paint(fmt));
         print_indent(Style::new(), start, 8, config.cols, "  ", to.make_install);
@@ -259,7 +263,7 @@ pub fn print_install(config: &Config, actions: &Actions, devel: &HashSet<String>
         let aur = if actions.iter_pkgbuilds().next().is_some() {
             "Pkgbuilds"
         } else {
-            "Aur"
+            "AUR"
         };
         let fmt = format!("{} ({}) ", aur, to.aur.len());
         let start = 16 + to.aur.len().to_string().len();
@@ -271,7 +275,7 @@ pub fn print_install(config: &Config, actions: &Actions, devel: &HashSet<String>
         let aur = if actions.iter_pkgbuilds().next().is_some() {
             tr!("Pkgbuilds Make")
         } else {
-            tr!("Aur Make")
+            tr!("AUR (build requirements)")
         };
 
         let fmt = format!("{} ({}) ", aur, to.make_aur.len());
@@ -287,7 +291,7 @@ fn repo<'a>(config: &'a Config, pkg: &str) -> &'a str {
     let (_, dbs) = repo::repo_aur_dbs(config);
 
     if dbs.is_empty() {
-        return "aur";
+        return "AUR";
     }
 
     let db = dbs
@@ -321,7 +325,7 @@ pub fn print_install_verbose(config: &Config, actions: &Actions, devel: &HashSet
         actions.iter_aur_pkgs().count(),
         actions.iter_pkgbuilds().count(),
     ) {
-        (a, 0) => format!("Aur ({})", a),
+        (a, 0) => format!("AUR ({})", a),
         (a, c) => format!("Pkgbuilds ({})", a + c),
     };
     let old = tr!("Old Version");

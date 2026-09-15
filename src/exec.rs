@@ -5,15 +5,17 @@ use crate::config::Config;
 
 use std::ffi::OsStr;
 use std::fmt::{Debug, Display, Formatter};
-use std::path::Path;
+use std::io::{Error as IoError, ErrorKind};
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use log::debug;
+use nix::unistd::{chown, setgid, setuid, Gid, Uid, User};
 use signal_hook::consts::signal::*;
 use signal_hook::flag as signal_flag;
 use std::sync::LazyLock;
@@ -142,27 +144,6 @@ pub fn wait(cmd: &Command, child: &mut Child) -> Result<Status> {
     Ok(status)
 }
 
-pub fn spawn_sudo(sudo: String, flags: Vec<String>) -> Result<()> {
-    update_sudo(&sudo, &flags)?;
-    thread::spawn(move || sudo_loop(&sudo, &flags));
-    Ok(())
-}
-
-fn sudo_loop<S: AsRef<OsStr>>(sudo: &str, flags: &[S]) -> Result<()> {
-    loop {
-        thread::sleep(Duration::from_secs(250));
-        update_sudo(sudo, flags)?;
-    }
-}
-
-fn update_sudo<S: AsRef<OsStr>>(sudo: &str, flags: &[S]) -> Result<()> {
-    let mut cmd = Command::new(sudo);
-    cmd.args(flags);
-    let status = command_status(&mut cmd)?;
-    status.success()?;
-    Ok(())
-}
-
 fn wait_for_lock(config: &Config) {
     let path = Path::new(config.alpm.dbpath()).join("db.lck");
     let c = config.color;
@@ -170,8 +151,7 @@ fn wait_for_lock(config: &Config) {
         println!(
             "{} {}",
             c.error.paint("::"),
-            c.bold
-                .paint(tr!("Pacman is currently in use, please wait..."))
+            c.bold.paint(tr!("Pacman is currently in use, please wait..."))
         );
 
         while path.exists() {
@@ -181,14 +161,11 @@ fn wait_for_lock(config: &Config) {
 }
 
 fn new_pacman<S: AsRef<str> + Display + Debug>(config: &Config, args: &Args<S>) -> Command {
-    let mut cmd = if config.need_root {
+    if config.need_root {
         wait_for_lock(config);
-        let mut cmd = Command::new(&config.sudo_bin);
-        cmd.args(&config.sudo_flags).arg(args.bin.as_ref());
-        cmd
-    } else {
-        Command::new(args.bin.as_ref())
-    };
+    }
+
+    let mut cmd = Command::new(args.bin.as_ref());
 
     if let Some(config) = &config.pacman_conf {
         cmd.args(["--config", config]);
@@ -216,16 +193,93 @@ fn new_makepkg<S: AsRef<OsStr>>(
     dir: &Path,
     args: &[S],
     pkgdest: Option<&str>,
-) -> Command {
+) -> Result<Command> {
+    let system_user = User::from_name("alpm")?
+        .context(tr!("system user 'alpm' does not exist"))?;
+
+    chown_build_dir(dir, system_user.uid, system_user.gid)?;
+
+    if let Some(builddir) = makepkg_build_dir(config)? {
+        chown_build_dir(&builddir, system_user.uid, system_user.gid)?;
+    }
+
     let mut cmd = Command::new(&config.makepkg_bin);
+
+    cmd.env("USER", system_user.name);
+    cmd.env("HOME", "/tmp");
+
     if let Some(mconf) = &config.makepkg_conf {
         cmd.arg("--config").arg(mconf);
     }
     if let Some(dest) = pkgdest {
         cmd.env("PKGDEST", dest);
     }
+    
     cmd.args(&config.mflags).args(args).current_dir(dir);
-    cmd
+
+    unsafe {
+        cmd.pre_exec(move || {
+            setgid(system_user.gid).map_err(|e| {
+                IoError::new(
+                    ErrorKind::PermissionDenied,
+                    format!("failed to setgid({}): {}", system_user.gid, e),
+                )
+            })?;
+            setuid(system_user.uid).map_err(|e| {
+                IoError::new(
+                    ErrorKind::PermissionDenied,
+                    format!("failed to setuid({}): {}", system_user.uid, e),
+                )
+            })?;
+            Ok(())
+        });
+    }
+
+    Ok(cmd)
+}
+
+fn chown_build_dir(path: &Path, uid: Uid, gid: Gid) -> Result<()> {
+    if !path.exists() {
+        std::fs::create_dir_all(path)?;
+    }
+
+    chown(path, Some(uid), Some(gid))?;
+
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let child = entry.path();
+            if entry.file_type()?.is_dir() {
+                chown_build_dir(&child, uid, gid)?;
+            } else {
+                chown(&child, Some(uid), Some(gid))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn makepkg_build_dir(config: &Config) -> Result<Option<PathBuf>> {
+    let path = config
+        .makepkg_conf
+        .as_deref()
+        .unwrap_or("/etc/makepkg.conf");
+    let conf = std::fs::read_to_string(path)
+        .with_context(|| tr!("failed to read makepkg config '{}'", path))?;
+
+    for line in conf.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if let Some(value) = line.strip_prefix("BUILDDIR=") {
+            let value = value.trim();
+            let value = value.trim_matches('"').trim_matches('\'');
+            if !value.is_empty() {
+                return Ok(Some(PathBuf::from(value)));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 pub fn makepkg_dest<S: AsRef<OsStr>>(
@@ -234,7 +288,7 @@ pub fn makepkg_dest<S: AsRef<OsStr>>(
     args: &[S],
     pkgdest: Option<&str>,
 ) -> Result<Status> {
-    let mut cmd = new_makepkg(config, dir, args, pkgdest);
+    let mut cmd = new_makepkg(config, dir, args, pkgdest)?;
     command_status(&mut cmd)
 }
 
@@ -248,7 +302,7 @@ pub fn makepkg_output_dest<S: AsRef<OsStr>>(
     args: &[S],
     pkgdest: Option<&str>,
 ) -> Result<Output> {
-    let mut cmd = new_makepkg(config, dir, args, pkgdest);
+    let mut cmd = new_makepkg(config, dir, args, pkgdest)?;
     command_output(&mut cmd)
 }
 

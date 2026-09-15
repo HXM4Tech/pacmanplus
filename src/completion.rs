@@ -80,7 +80,7 @@ pub async fn update_aur_cache(aur_url: &Url, cache_dir: &Path, timeout: Option<u
 async fn aur_list<W: Write>(config: &Config, w: &mut W, timeout: Option<u64>) -> Result<()> {
     update_aur_cache(&config.aur_url, &config.cache_dir, timeout)
         .await
-        .context(tr!("could not update aur cache"))?;
+        .context(tr!("could not update AUR cache"))?;
     let path = config.cache_dir.join("packages.aur");
     let file = OpenOptions::new().read(true).open(path)?;
     let file = BufReader::new(file);

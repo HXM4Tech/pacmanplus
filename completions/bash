@@ -48,10 +48,9 @@ _pacman_repo_list() {
   _arch_compgen "$(pacman-conf --repo-list)"$'\n'"$(paru -Sl --pkgbuilds | cut -d ' ' -f1 | uniq)"
 }
 
-_paru() {
+_pacmanplus() {
   compopt -o default
   local common core cur database files prev query remove sync upgrade o
-  local show getpkgbuild
   local cur prev words cword
 
   _init_completion || return
@@ -79,12 +78,7 @@ _paru() {
            chroot nochroot sign nosign keeprepocache nokeeprepocache signdb nosigndb
            localrepo nolocalrepo review skipreview' 'b d h q r v a')
 
-  show=('news stats' 'w s')
-  getpkgbuild=('print comments' 'p c')
-  chrootctl=('sysupgrade install' 'u i')
-  repoctl=('quiet list delete refresh clean' 'q l d y c')
-
-  for o in 'D database' 'F files' 'Q query' 'R remove' 'S sync' 'U upgrade' 'P show' 'G getpkgbuild' 'C chrootctl' 'L repoctl'; do
+  for o in 'D database' 'F files' 'Q query' 'R remove' 'S sync' 'T deptest' 'U upgrade'; do
     _arch_incomp "$o" && break
   done
 
@@ -93,7 +87,7 @@ _paru() {
   elif [[ ! $prev =~ ^-[[:alnum:]_]*[Vbhr] && ! $prev == --@(cachedir|color|config|dbpath|help|hookdir|gpgdir|logfile|root|version) ]]; then
     [[ $cur == -* ]] && _arch_ptr2comp ${o#* } common ||
       case ${o% *} in
-      D | R)
+      D | R | T)
         _pacman_pkg Qq
         ;;
       F)
@@ -118,9 +112,6 @@ _paru() {
       U)
         _pacman_file
         ;;
-      G)
-        _paru_pkg
-        ;;
       esac
   fi
   true
@@ -131,6 +122,6 @@ _pacman_file() {
   _filedir 'pkg.tar*'
 }
 
-complete -F _paru paru
+complete -F _pacmanplus pacman+
 
 # ex:et ts=2 sw=2 ft=sh

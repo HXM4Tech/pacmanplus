@@ -93,14 +93,14 @@ pub struct Warnings<'a> {
 }
 
 impl<'a> Warnings<'a> {
-    pub fn missing(&self, color: Colors, cols: Option<usize>) -> &Self {
-        if !self.missing.is_empty() {
-            let b = color.bold;
-            let e = color.error;
-            let msg = tr!("packages not in the AUR: ");
-            print!("{} {}", e.paint("::"), b.paint(&msg));
-            print_indent(Style::new(), msg.len() + 3, 4, cols, "  ", &self.missing);
-        }
+    pub fn missing(&self, _color: Colors, _cols: Option<usize>) -> &Self {
+        // if !self.missing.is_empty() {
+        //     let b = _color.bold;
+        //     let e = _color.error;
+        //     let msg = tr!("packages not in the AUR: ");
+        //     print!("{} {}", e.paint("::"), b.paint(&msg));
+        //     print_indent(Style::new(), msg.len() + 3, 4, _cols, "  ", &self.missing);
+        // }
         self
     }
 

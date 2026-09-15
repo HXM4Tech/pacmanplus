@@ -1,4 +1,4 @@
-use paru::run;
+use pacmanplus::run;
 use std::process::exit;
 
 #[tokio::main]
