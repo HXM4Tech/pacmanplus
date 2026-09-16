@@ -86,7 +86,7 @@ pub fn list_pkgbuilds(config: &Config, repos: &PkgbuildRepos, repo: &str) {
                     config,
                     &mut stdout,
                     name.as_bytes(),
-                    &repo.name,
+                    Some(&repo.name),
                     &pkg.srcinfo.version(),
                 )
             }
@@ -116,15 +116,16 @@ pub async fn list_aur(config: &Config) -> Result<()> {
     let mut stdout = stdout.lock();
 
     for line in data.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
-        print_pkg(config, &mut stdout, line, "AUR", "unknown-version");
+        print_pkg(config, &mut stdout, line, None, "unknown-version");
     }
 
     Ok(())
 }
 
-fn print_pkg(config: &Config, mut stdout: impl Write, line: &[u8], repo: &str, version: &str) {
+fn print_pkg(config: &Config, mut stdout: impl Write, line: &[u8], repo: Option<&str>, version: &str) {
     let cpkg = config.color.sl_pkg;
     let crepo = config.color.sl_repo;
+    let caur = config.color.sl_aur;
     let cversion = config.color.sl_version;
     let cinstalled = config.color.sl_installed;
 
@@ -133,7 +134,12 @@ fn print_pkg(config: &Config, mut stdout: impl Write, line: &[u8], repo: &str, v
         let _ = stdout.write_all(b"\n");
         return;
     }
-    let _ = crepo.paint(repo.as_bytes()).write_to(&mut stdout);
+
+    let _ = match repo {
+        Some(repo) => crepo.paint(repo.as_bytes()).write_to(&mut stdout),
+        None => caur.paint("aur".as_bytes()).write_to(&mut stdout),
+    };
+
     let _ = stdout.write_all(b" ");
     let _ = cpkg.paint(line).write_to(&mut stdout);
     let _ = stdout.write_all(b" ");

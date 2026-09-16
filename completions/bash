@@ -39,13 +39,12 @@ _pacman_pkg() {
   )"
 }
 
-_paru_pkg() {
-  [ -z "$cur" ] && _pacman_pkg Slq && return
-  _arch_compgen "$(paru -Pc)"
+_pacmanplus_pkg() {
+  _arch_compgen "$(pacman+ -Slq)"
 }
 
 _pacman_repo_list() {
-  _arch_compgen "$(pacman-conf --repo-list)"$'\n'"$(paru -Sl --pkgbuilds | cut -d ' ' -f1 | uniq)"
+  _arch_compgen "$(pacman-conf --repo-list)"$'\n'"$(pacman+ -Sl --pkgbuilds | cut -d ' ' -f1 | uniq)"
 }
 
 _pacmanplus() {
@@ -107,7 +106,7 @@ _pacmanplus() {
         { _arch_incomp 'g groups' && _pacman_pkg Sg; } ||
           { _arch_incomp 'l list' && _pacman_repo_list; } ||
           { _arch_incomp 's search' && compopt +o default; } ||
-          _paru_pkg
+          _pacmanplus_pkg
         ;;
       U)
         _pacman_file

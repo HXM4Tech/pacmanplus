@@ -28,8 +28,6 @@ package() {
   install -Dm644 pacman+.conf "${pkgdir}/etc/pacman+.conf"
 
   install -Dm644 completions/bash "${pkgdir}/usr/share/bash-completion/completions/pacman+.bash"
-  install -Dm644 completions/fish "${pkgdir}/usr/share/fish/vendor_completions.d/pacman+.fish"
-  install -Dm644 completions/zsh "${pkgdir}/usr/share/zsh/site-functions/_pacman+"
 
   install -dm755 "${pkgdir}/var/cache/pacman+"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
