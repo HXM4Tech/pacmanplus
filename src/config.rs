@@ -474,28 +474,24 @@ pub struct Config {
 
     pub pre_build_command: Option<String>,
 
-    #[default = "makepkg"]
+    #[default = "/usr/bin/makepkg"]
     pub makepkg_bin: String,
-    #[default = "pacman"]
+    #[default = "/usr/bin/pacman"]
     pub pacman_bin: String,
     pub pacman_conf_bin: Option<String>,
-    #[default = "git"]
+    #[default = "/usr/bin/git"]
     pub git_bin: String,
-    #[default = "gpg"]
+    #[default = "/usr/bin/gpg"]
     pub gpg_bin: String,
-    #[default = "sudo"]
-    pub sudo_bin: String,
-    #[default = "pkgctl"]
+    #[default = "/usr/bin/pkgctl"]
     pub pkgctl_bin: String,
-    #[default = "bat"]
+    #[default = "/usr/bin/bat"]
     pub bat_bin: String,
-    pub fm: Option<String>,
 
     pub mflags: Vec<String>,
     pub git_flags: Vec<String>,
     pub gpg_flags: Vec<String>,
     pub bat_flags: Vec<String>,
-    pub fm_flags: Vec<String>,
     pub chroot_flags: Vec<String>,
     pub pager_cmd: Option<String>,
 
@@ -1041,12 +1037,10 @@ then initialise it with:
             "Gpg" => self.gpg_bin = value,
             "Pager" => self.pager_cmd = Some(value),
             "Bat" => self.bat_bin = value,
-            "FileManager" => self.fm = Some(value),
             "MFlags" => self.mflags.extend(split),
             "GitFlags" => self.git_flags.extend(split),
             "GpgFlags" => self.gpg_flags.extend(split),
             "BatFlags" => self.bat_flags.extend(split),
-            "FileManagerFlags" => self.fm_flags.extend(split),
             "ChrootFlags" => self.chroot_flags.extend(split),
             "PreBuildCommand" => self.pre_build_command = Some(value),
             _ => eprintln!(

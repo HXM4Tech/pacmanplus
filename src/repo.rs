@@ -204,8 +204,8 @@ pub fn delete(config: &mut Config) -> Result<(), Error> {
         config.alpm.set_raw_log_cb(cb);
 
         if !rmfiles.is_empty() {
-            let mut cmd = Command::new(&config.sudo_bin);
-            cmd.arg("rm").args(rmfiles);
+            let mut cmd = Command::new("/usr/bin/rm");
+            cmd.args(rmfiles);
             exec::command(&mut cmd)?;
         }
 

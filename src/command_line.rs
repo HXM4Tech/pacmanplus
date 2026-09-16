@@ -180,7 +180,6 @@ impl Config {
             Arg::Long("gpg") => self.gpg_bin = value?.to_string(),
             Arg::Long("pkgctl") => self.pkgctl_bin = value?.to_string(),
             Arg::Long("bat") => self.bat_bin = value?.to_string(),
-            Arg::Long("fm") => self.fm = Some(value?.to_string()),
             Arg::Long("pager") => self.pager_cmd = Some(value?.to_string()),
             Arg::Long("config") => self.pacman_conf = Some(value?.to_string()),
 
@@ -191,7 +190,6 @@ impl Config {
             Arg::Long("gitflags") => self.git_flags.extend(split_whitespace(value?)),
             Arg::Long("gpgflags") => self.gpg_flags.extend(split_whitespace(value?)),
             Arg::Long("batflags") => self.bat_flags.extend(split_whitespace(value?)),
-            Arg::Long("fmflags") => self.fm_flags.extend(split_whitespace(value?)),
             Arg::Long("chrootflags") => self.chroot_flags.extend(split_whitespace(value?)),
             Arg::Long("chrootpkgs") => self
                 .chroot_pkgs

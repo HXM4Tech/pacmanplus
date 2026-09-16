@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::exec;
 use anyhow::{Context, Result};
 use nix::unistd::{Uid, User};
@@ -11,7 +10,6 @@ use std::process::Command;
 
 #[derive(Debug)]
 pub struct Chroot {
-    pub sudo: String,
     pub path: PathBuf,
     pub pacman_conf: String,
     pub makepkg_conf: String,
@@ -45,17 +43,16 @@ impl Chroot {
         self.path.join("root").exists()
     }
 
-    pub fn create(&self, config: &Config) -> Result<()> {
-        let mut cmd = Command::new(&config.sudo_bin);
-        cmd.arg("install").arg("-dm755").arg(&self.path);
+    pub fn create(&self) -> Result<()> {
+        let mut cmd = Command::new("/usr/bin/install");
+        cmd.arg("-dm755").arg(&self.path);
         exec::command(&mut cmd)?;
 
         let tmp = pacman_conf(&self.pacman_conf)?;
         let dir = self.path.join("root");
 
-        let mut cmd = Command::new(&self.sudo);
-        cmd.arg("mkarchroot")
-            .arg("-C")
+        let mut cmd = Command::new("/usr/bin/mkarchroot");
+        cmd.arg("-C")
             .arg(tmp.path())
             .arg("-M")
             .arg(&self.makepkg_conf)
@@ -84,9 +81,8 @@ impl Chroot {
         };
         let tmp = pacman_conf(&self.pacman_conf)?;
 
-        let mut cmd = Command::new(&self.sudo);
-        cmd.arg("arch-nspawn")
-            .arg("-C")
+        let mut cmd = Command::new("/usr/bin/arch-nspawn");
+        cmd.arg("-C")
             .arg(tmp.path())
             .arg("-M")
             .arg(&self.makepkg_conf)
@@ -112,9 +108,8 @@ impl Chroot {
         let conf = pacmanconf::Config::with_opts(None, Some(self.pacman_conf.as_str()), Some("/"))?;
         let db = Path::new(&conf.db_path).join("sync");
         let dir = self.path.join("root");
-        let mut cmd = Command::new(&self.sudo);
-        cmd.arg("cp")
-            .arg("-auT")
+        let mut cmd = Command::new("cp");
+        cmd.arg("-auT")
             .arg(&db)
             .arg(dir.join(db.strip_prefix("/")?));
         let _ = exec::command(&mut cmd);

@@ -19,21 +19,24 @@ pub fn clean(config: &Config) -> Result<()> {
             println!();
         }
 
+        printtr!("Cache directory: {}", config.cache_dir.display());
         let question = tr!("Do you want to clean ALL AUR packages from cache?");
 
-        printtr!("Clone Directory: {}", config.fetch.clone_dir.display());
+        if ask(config, &question, true) && config.cache_dir.exists() {
+            printtr!("removing AUR source files from cache directory...");
 
-        if ask(config, &question, true) && config.fetch.clone_dir.exists() {
-            remove_dir_all(&config.fetch.clone_dir).with_context(|| {
+            for entry in config.cache_dir.read_dir().with_context(|| {
                 tr!(
-                    "could not remove '{}'",
-                    config.fetch.clone_dir.display().to_string()
+                    "could not read cache directory '{}'",
+                    config.cache_dir.display().to_string()
                 )
-            })?;
-        }
-
-        if config.fetch.diff_dir.exists() {
-            let _ = remove_dir_all(&config.fetch.diff_dir);
+            })? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    let _ = remove_dir_all(&path);
+                }
+            }
         }
     }
     Ok(())

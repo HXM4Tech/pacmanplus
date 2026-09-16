@@ -13,7 +13,7 @@ use crate::chroot::Chroot;
 use crate::config::{Config, LocalRepos, Mode, Op, Sign, YesNoAllTree, YesNoAsk};
 use crate::devel::{fetch_devel_info, load_devel_info, save_devel_info, DevelInfo};
 use crate::download::{self, Bases};
-use crate::exec::{command_status, has_command};
+use crate::exec::has_command;
 use crate::fmt::{print_indent, print_install, print_install_verbose};
 use crate::keys::check_pgp_keys;
 use crate::pkgbuild::PkgbuildRepo;
@@ -838,7 +838,7 @@ impl Installer {
 
         if config.chroot {
             if !self.chroot.exists() {
-                self.chroot.create(config)?;
+                self.chroot.create()?;
             } else {
                 self.chroot.update()?;
             }
@@ -1091,7 +1091,7 @@ impl Installer {
 
         let mut do_review = false;
         if !config.skip_review && actions.iter_aur_pkgs().next().is_some() {
-            do_review = ask(config, &tr!("Review?"), false);
+            do_review = ask(config, &tr!("Review PKGBUILD(s)?"), false);
         }
 
         if !do_review && !ask(config, &tr!("Proceed with installation?"), true) {
@@ -1372,11 +1372,6 @@ fn check_actions(
     } else {
         Vec::new()
     };
-    println!(
-        "{} {}",
-        c.action.paint("::"),
-        c.bold.paint(tr!("Calculating inner conflicts..."))
-    );
     let inner_conflicts = actions.calculate_inner_conflicts(!config.chroot);
 
     if !conflicts.is_empty() || !inner_conflicts.is_empty() {
@@ -1546,32 +1541,6 @@ fn pre_build_command(config: &Config, dir: &Path, base: &str, version: &str) -> 
     Ok(())
 }
 
-fn file_manager(
-    config: &Config,
-    fetch: &aur_fetch::Fetch,
-    fm: &str,
-    pkgs: &[&str],
-) -> Result<tempfile::TempDir> {
-    let has_diff = fetch.has_diff(pkgs)?;
-    fetch.save_diffs(&has_diff)?;
-    let view = tempfile::Builder::new().prefix("pacmanplus-AUR").tempdir()?;
-    fetch.make_view(view.path(), pkgs, &has_diff)?;
-    run_file_manager(config, fm, view.path())?;
-    Ok(view)
-}
-
-fn run_file_manager(config: &Config, fm: &str, dir: &Path) -> Result<()> {
-    let mut cmd = Command::new(fm);
-    cmd.args(&config.fm_flags).arg(dir).current_dir(dir);
-    let ret =
-        command_status(&mut cmd).with_context(|| tr!("failed to execute file manager: {}", fm))?;
-    ensure!(
-        ret.success().is_ok(),
-        tr!("file manager '{}' did not execute successfully", fm)
-    );
-    Ok(())
-}
-
 fn print_pkgbuild(
     config: &Config,
     pkgdir: &Path,
@@ -1624,64 +1593,52 @@ pub fn review(config: &Config, fetch: &aur_fetch::Fetch, pkgs: &[&str]) -> Resul
         return Ok(());
     }
     if !config.no_confirm {
-        if let Some(ref fm) = config.fm {
-            let _view = file_manager(config, fetch, fm, pkgs)?;
+        let pager_unconfigured =
+            var("PACMANPLUS_PAGER").is_err() && var("PAGER").is_err();
+        let pager = if has_command("less") { "less" } else { "cat" };
 
-            if !ask(config, &tr!("Accept?"), true) {
-                return Status::err(1);
-            }
+        let pager = config
+            .pager_cmd
+            .clone()
+            .or_else(|| var("PACMANPLUS_PAGER").ok())
+            .or_else(|| var("PAGER").ok())
+            .unwrap_or_else(|| pager.to_string());
 
-            if config.save_changes {
-                fetch.commit(pkgs, "pacmanplus save changes")?;
-            }
-        } else {
-            let pager_unconfigured =
-                var("PACMANPLUS_PAGER").is_err() && var("PAGER").is_err();
-            let pager = if has_command("less") { "less" } else { "cat" };
+        exec::RAISE_SIGPIPE.store(false, Ordering::Relaxed);
+        let mut command = Command::new("sh");
 
-            let pager = config
-                .pager_cmd
-                .clone()
-                .or_else(|| var("PACMANPLUS_PAGER").ok())
-                .or_else(|| var("PAGER").ok())
-                .unwrap_or_else(|| pager.to_string());
+        if std::env::var("LESS").is_err() {
+            command.env("LESS", "SRXF");
+        }
+        command.arg("-c").arg(&pager).stdin(Stdio::piped());
+        let mut child = exec::spawn(&mut command)?;
 
-            exec::RAISE_SIGPIPE.store(false, Ordering::Relaxed);
-            let mut command = Command::new("sh");
+        let mut stdin = child.stdin.take().unwrap();
 
-            if std::env::var("LESS").is_err() {
-                command.env("LESS", "SRXF");
-            }
-            command.arg("-c").arg(&pager).stdin(Stdio::piped());
-            let mut child = exec::spawn(&mut command)?;
+        if pager_unconfigured && pager == "less" {
+            let _ = write!(
+                stdin,
+                "{}",
+                c.bold
+                    .paint(tr!("Paging with less. Press 'q' to quit or 'h' for help."))
+            );
+            let _ = stdin.write_all(b"\n\n");
+        }
 
-            let mut stdin = child.stdin.take().unwrap();
+        let bat = config.color.enabled && has_command(&config.bat_bin);
+        let mut buf = Vec::new();
+        for &pkg in pkgs {
+            let dir = fetch.clone_dir.join(pkg);
+            let _ = writeln!(stdin, "{} {}:", c.action.paint("::"), c.bold.paint(pkg));
+            print_pkgbuild(config, &dir, &mut stdin, &mut buf, bat)?;
+        }
 
-            if pager_unconfigured && pager == "less" {
-                let _ = write!(
-                    stdin,
-                    "{}",
-                    c.bold
-                        .paint(tr!("Paging with less. Press 'q' to quit or 'h' for help."))
-                );
-                let _ = stdin.write_all(b"\n\n");
-            }
+        drop(stdin);
+        exec::wait(&command, &mut child)?;
+        exec::RAISE_SIGPIPE.store(true, Ordering::Relaxed);
 
-            let bat = config.color.enabled && has_command(&config.bat_bin);
-            let mut buf = Vec::new();
-            for &pkg in pkgs {
-                let dir = fetch.clone_dir.join(pkg);
-                let _ = writeln!(stdin, "{} {}:", c.action.paint("::"), c.bold.paint(pkg));
-                print_pkgbuild(config, &dir, &mut stdin, &mut buf, bat)?;
-            }
-
-            drop(stdin);
-            exec::wait(&command, &mut child)?;
-            exec::RAISE_SIGPIPE.store(true, Ordering::Relaxed);
-
-            if !ask(config, &tr!("Accept?"), true) {
-                return Status::err(1);
-            }
+        if !ask(config, &tr!("Accept & proceed with installation?"), true) {
+            return Status::err(1);
         }
     }
 
@@ -1691,10 +1648,6 @@ pub fn review(config: &Config, fetch: &aur_fetch::Fetch, pkgs: &[&str]) -> Resul
 
 fn chroot(config: &Config) -> Chroot {
     let mut chroot = Chroot {
-        #[cfg(not(feature = "mock_chroot"))]
-        sudo: config.sudo_bin.clone(),
-        #[cfg(feature = "mock_chroot")]
-        sudo: "sudo".to_string(),
         path: config.chroot_dir.clone(),
         pacman_conf: config
             .pacman_conf
