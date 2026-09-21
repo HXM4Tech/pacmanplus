@@ -3,7 +3,7 @@ use crate::util::executable_name;
 
 pub fn help() {
     let exe = executable_name();
-    printtr!("usage:  {exe} <operation> [...]", exe = exe);
+    printtr!("usage: {exe} <operation> [...]", exe = exe);
     println!();
     printtr!("operations:");
     printtr!("    {exe} {{-h --help}}", exe = exe);
